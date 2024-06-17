@@ -64,14 +64,14 @@ class TapDance(HoldTap):
         # active tap dance
         if key in self.td_counts:
             count = self.td_counts[key]
-            kc = key.meta.keys[count]
+            kc = key.meta.keys_at_idx[count]
             keyboard.cancel_timeout(self.key_states[kc].timeout_key)
 
             count += 1
 
             # Tap dance reached the end of the list: send last tap in sequence
             # and start from the beginning.
-            if count >= len(key.meta.keys):
+            if count >= len(key.meta.keys_at_idx):
                 self.key_states[kc].activated = ActivationType.RELEASED
                 self.on_tap_time_expired(kc, keyboard)
                 count = 0
@@ -82,7 +82,7 @@ class TapDance(HoldTap):
         else:
             count = 0
 
-        current_key = key.meta.keys[count]
+        current_key = key.meta.keys_at_idx[count]
 
         self.ht_pressed(current_key, keyboard, *args, **kwargs)
         self.td_counts[key] = count
@@ -93,7 +93,7 @@ class TapDance(HoldTap):
 
     def td_released(self, key, keyboard, *args, **kwargs):
         try:
-            kc = key.meta.keys[self.td_counts[key]]
+            kc = key.meta.keys_at_idx[self.td_counts[key]]
         except KeyError:
             return
         state = self.key_states[kc]

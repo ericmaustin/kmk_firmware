@@ -4,6 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+adafruit-ampy = "<1.1,>=1.0.5"
 
 [dev-packages]
 flake8 = "==7.0.0"

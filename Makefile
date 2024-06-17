@@ -38,6 +38,8 @@ compile-check:
 	@false
 else
 compile-check: $(PY_KMK_TREE:%.py=$(MPY_TARGET_DIR)/%.mpy)
+	@echo "===> Compiling with mpy-cross at $(shell which mpy-cross)"
+	@echo "===> mpy-cross @ $(shell mpy-cross --version)"
 	@echo "===> Compiling all py files to mpy with flags $(MPY_FLAGS)"
 $(MPY_TARGET_DIR)/%.mpy: %.py
 	@mkdir -p $(dir $@)
