@@ -2,15 +2,14 @@ from __future__ import annotations
 
 try:
     from typing import (
+        TYPE_CHECKING,
         Tuple,
         Dict,
         List,
-        TYPE_CHECKING,
         NamedTuple,
-        Callable,
         Mapping,
         Generator,
-        Any,
+        Callable,
     )
 except ImportError:
     TYPE_CHECKING = False
@@ -23,6 +22,11 @@ from kmk.keys import Key, KC, ModifierKey, make_argumented_key
 from kmk.modules import Module
 from kmk.utils import Debug
 from kmk.kmk_keyboard import KMKKeyboard
+
+
+if TYPE_CHECKING:
+    KeyMap = tuple[set[Key]]
+    KeyAction = Callable[[KeyMap, KMKKeyboard, Key | None], None]
 
 _debug = Debug(__name__)
 
@@ -58,6 +62,12 @@ def noop(*_, **__):
     pass
 
 
+def add_mods(key: Key, mods: set[ModifierKey]) -> Key:
+    for mod in mods:
+        key = mod(key)
+    return key
+
+
 def press_action(ikey: int) -> KeyAction:
     def f(key_map: KeyMap, keyboard: KMKKeyboard, *_, **__) -> None:
         for k in key_map[ikey]:
@@ -72,12 +82,6 @@ def release_action(ikey: int, reverse: bool = False) -> KeyAction:
             keyboard.remove_key(k)
 
     return f
-
-
-def add_mods(key: Key, mods: set[ModifierKey]) -> Key:
-    for mod in mods:
-        key = mod(key)
-    return key
 
 
 def tap_action(
@@ -130,12 +134,12 @@ def chain(*args: KeyAction, delay=0, abort_on: bf.Flag = bf.NONE):
             yield ops.pop(0)
 
     def wrapped(key_map: KeyMap, keyboard: KMKKeyboard, interrupt: None = None) -> None:
-        _sequence_with_delay(gen(), key_map, keyboard, interrupt, delay, abort_on)
+        _sequence(gen(), key_map, keyboard, interrupt, delay, abort_on)
 
     return wrapped
 
 
-def _sequence_with_delay(
+def _sequence(
     iterator: Generator[KeyAction],
     key_map: KeyMap,
     keyboard: KMKKeyboard,
@@ -152,7 +156,7 @@ def _sequence_with_delay(
 
     def f():
         op(key_map, keyboard, interrupt)
-        _sequence_with_delay(
+        _sequence(
             iterator, key_map, keyboard, interrupt, delay, abort_on, __count__ + 1
         )
 
@@ -575,8 +579,3 @@ def mod_interrupt(
         stop_on=Mode.RELEASE,
         ignore=(ignore or set()) | set(mods),
     )
-
-
-if TYPE_CHECKING:
-    KeyMap = tuple[set[Key]]
-    KeyAction = Callable[[KeyMap, KMKKeyboard, Key | None], None]
