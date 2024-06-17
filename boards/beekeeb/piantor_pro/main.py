@@ -37,12 +37,12 @@ flex_mod.add_key(
     'HR',
     flex.Action(
         flex.Mode.RELEASE | flex.Mode.INTERRUPT,  # trigger on release or interrupt
-        flex.tap(0),
+        flex.tap_action(0),
         timeout=100,  # timeout after 100ms
     ),
     flex.Action(
         flex.Mode.RELEASE | flex.Mode.TIMEOUT,  # trigger on release or timeout
-        flex.tap(0, mods=(KC.LSFT,)),  # tap with left shift
+        flex.tap_action(0, mods=(KC.LSFT,)),  # tap with left shift
         stop_on=flex.Mode.INTERRUPT | flex.Mode.RELEASE,  # abort if interrupted
         after=100,  # activate after 100ms
         timeout=200,  # timeout after 500ms
@@ -50,7 +50,7 @@ flex_mod.add_key(
     ),
     flex.Action(
         flex.Mode.INTERRUPT,
-        flex.tap(1, wrap_interrupt=True),
+        flex.tap_action(1, wrap_interrupt=True),
         after=100,
         timeout=1000,
     ),
