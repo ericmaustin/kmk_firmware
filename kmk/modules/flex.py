@@ -25,8 +25,7 @@ from kmk.kmk_keyboard import KMKKeyboard
 
 
 if TYPE_CHECKING:
-    KeyMap = tuple[set[Key]]
-    KeyAction = Callable[[KeyMap, KMKKeyboard, Key | None], None]
+    KeyAction = Callable[[tuple[Key, ...], KMKKeyboard, Key | None], None]
 
 _debug = Debug(__name__)
 
@@ -35,10 +34,19 @@ DEFAULT_TIMEOUT = const(300)
 DEFAULT_TAP_TIME = const(100)
 DEFAULT_TAP_DELAY = const(10)
 
+# if _debug.enabled:
+#
+#     def debug(msg: str):
+#         _debug("[Flex] " + msg)
+#
+# else:
+#
+#     def debug(_: str):
+#         pass
+
 
 def debug(msg: str):
-    if _debug.enabled:
-        _debug("[Flex] " + msg)
+    _debug("[Flex] " + msg)
 
 
 @bf.flagged
@@ -49,6 +57,16 @@ class Mode:
     TIMEOUT = bf.Flag()
     INTERRUPT = bf.Flag()
     TAP = bf.Operation('PRESS | RELEASE')  # tap key
+
+    @staticmethod
+    def flag_to_str(flag: bf.Flag) -> str:
+        return {
+            Mode.PRESS: 'PRESS',
+            Mode.RELEASE: 'RELEASE',
+            Mode.TIMEOUT: 'TIMEOUT',
+            Mode.INTERRUPT: 'INTERRUPT',
+            Mode.TAP: 'TAP',
+        }[flag]
 
 
 @bf.flagged
@@ -69,19 +87,11 @@ def add_mods(key: Key, mods: set[ModifierKey]) -> Key:
 
 
 def press_action(ikey: int) -> KeyAction:
-    def f(key_map: KeyMap, keyboard: KMKKeyboard, *_, **__) -> None:
-        for k in key_map[ikey]:
-            keyboard.add_key(k)
-
-    return f
+    return lambda key_map, keyboard, *_, **__: keyboard.add_key(key_map[ikey])
 
 
-def release_action(ikey: int, reverse: bool = False) -> KeyAction:
-    def f(key_map: KeyMap, keyboard: KMKKeyboard, *_, **__) -> None:
-        for k in key_map[ikey] if not reverse else reversed(key_map[ikey]):
-            keyboard.remove_key(k)
-
-    return f
+def release_action(ikey: int) -> KeyAction:
+    return lambda key_map, keyboard, *_, **__: keyboard.remove_key(key_map[ikey])
 
 
 def tap_action(
@@ -91,7 +101,9 @@ def tap_action(
 ) -> KeyAction:
     mods = mods or ()
 
-    def f(key_map: KeyMap, keyboard: KMKKeyboard, interrupt: Key = None) -> None:
+    def f(
+        key_map: tuple[Key, ...], keyboard: KMKKeyboard, interrupt: Key = None
+    ) -> None:
         rel_keys = []
 
         if isinstance(mods, int):
@@ -99,74 +111,43 @@ def tap_action(
         else:
             mod_keys = mods
 
-        for key in key_map[ikey]:
-            modded_key = add_mods(key, mod_keys)
-            rel_keys.append(modded_key)
-            keyboard.add_key(modded_key)
+        debug(f"tap_action mods: {mod_keys}")
+
+        keyboard.add_key(add_mods(key_map[ikey], mods))
 
         if wrap_interrupt and interrupt:
+            if isinstance(interrupt.meta, _KeyMeta):
+                keyboard.tap_key(add_mods(interrupt.meta.key_map[0]))
+            else:
+                keyboard.tap_key(add_mods(interrupt, mod_keys))
 
-            keyboard.tap_key(add_mods(interrupt, mod_keys))
+        # keyboard._send_hid()
 
         def cb(keys):
             for _k in reversed(keys):
                 keyboard.remove_key(_k)
+            # keyboard._send_hid()
 
         keyboard.set_timeout(0, lambda keys=tuple(rel_keys): cb(keys))
 
-    return f
+    return lambda key_map, keyboard, interrupt: f(key_map, keyboard, interrupt)
 
 
-def mod_interrupt_action(mods: set[ModifierKey] | int = None) -> KeyAction:
+def mod_interrupt_action(mods: set[ModifierKey]) -> KeyAction:
 
     def f(_, keyboard: KMKKeyboard, interrupt: Key = None) -> None:
-        key = add_mods(interrupt, mods)
-        debug(f'mod_interrupt_action tapping key {key}')
-        keyboard.tap_key(key)
+        if isinstance(interrupt.meta, _KeyMeta):
+            debug(
+                f"mod_interrupt_action: interrupting with {interrupt.meta.key_map[0]} mods: {mods}"
+            )
+            modded_key = add_mods(interrupt.meta.key_map[0], mods)
+            debug(f"mod_interrupt_action: modded_key: {modded_key}")
+            keyboard.tap_key(modded_key)
+            return
+
+        keyboard.tap_key(add_mods(interrupt, mods))
 
     return f
-
-
-def chain(*args: KeyAction, delay=0, abort_on: bf.Flag = bf.NONE):
-    def gen() -> Generator[KeyAction]:
-        ops = list(args)
-        while ops:
-            yield ops.pop(0)
-
-    def wrapped(key_map: KeyMap, keyboard: KMKKeyboard, interrupt: None = None) -> None:
-        _sequence(gen(), key_map, keyboard, interrupt, delay, abort_on)
-
-    return wrapped
-
-
-def _sequence(
-    iterator: Generator[KeyAction],
-    key_map: KeyMap,
-    keyboard: KMKKeyboard,
-    interrupt: Key | None,
-    delay: int,
-    abort_on: bf.Flag,
-    __count__: int = 0,
-):
-    try:
-        op = next(iterator)
-    except StopIteration:
-        # no more operations
-        return
-
-    def f():
-        op(key_map, keyboard, interrupt)
-        _sequence(
-            iterator, key_map, keyboard, interrupt, delay, abort_on, __count__ + 1
-        )
-
-    if __count__ == 0:
-        # first operation, execute immediately
-        f()
-        return
-
-    # delay execution on subsequent operations
-    keyboard.set_timeout(delay, f)
 
 
 class Action:
@@ -210,18 +191,8 @@ class Action:
 class _KeyMeta:
     __slots__ = ('key_map',)
 
-    def __init__(
-        self,
-        *key_map: KeyMap,
-    ):
-        _key_map = []
-        for k in key_map:
-            if not isinstance(k, set):
-                _key_map.append({k})
-            else:
-                _key_map.append(k)
-
-        self.key_map = tuple(_key_map)
+    def __init__(self, *key_map: tuple[Key, ...]):
+        self.key_map = key_map
 
 
 class _KeyState:
@@ -238,7 +209,7 @@ class _KeyState:
 
     def __init__(
         self,
-        key_map: KeyMap,
+        key_map: tuple[Key, ...],
         status: _KeyStatus.NONE,
     ):
         self.status = status
@@ -254,7 +225,7 @@ class _KeyState:
         return (t for ts in self.__tasks.values() for t in ts)
 
     @property
-    def key_map(self):
+    def key_map(self) -> tuple[Key, ...]:
         return self.__key_map
 
     @property
@@ -303,15 +274,18 @@ class Flex(Module):
     def process_key(
         self, keyboard: KMKKeyboard, current_key: Key, is_pressed: bool, int_coord: int
     ):
-        if current_key in self.__key_states.keys() or not is_pressed:
+        if not is_pressed:
             # ignore key if already in state or key is released
             return current_key
 
         captured = False
 
-        for key, state in tuple(self.__key_states.items()):
-            if _KeyStatus.PRESSED not in state.status:
+        for key in tuple(self.__key_states.keys()):
+            if key == current_key:
+                # ignore THIS key
                 continue
+
+            state = self.__key_states[key]
 
             for i in tuple(state.actions_active):
                 action = state.actions[i]
@@ -319,12 +293,14 @@ class Flex(Module):
                     action.interrupt_requires
                     and action.interrupt_requires - keyboard.keys_pressed
                 ):
+                    debug(f'key {current_key} does not meet interrupt requirements')
                     continue
 
                 if (
                     action.interrupt_ignore
                     and action.interrupt_ignore & keyboard.keys_pressed
                 ):
+                    debug(f'key {current_key} is ignored by interrupt_ignore')
                     continue
 
                 self.do_action(i, Mode.INTERRUPT, key, keyboard, current_key)
@@ -352,7 +328,6 @@ class Flex(Module):
         for i, act in enumerate(actions):
             state.actions[i] = act
             if act.after > -1:
-                debug(f'key {key} has delay for action {i}')
                 state.actions_delayed.add(i)
                 state.add_task(
                     i,
@@ -380,17 +355,19 @@ class Flex(Module):
                 )
 
     def on_delay_expires(self, action_idx: int, key: Key, keyboard: KMKKeyboard):
-        debug(f"delay expired for action {action_idx} on key {key}")
-        if key not in self.__key_states.keys():
+        try:
+            state = self.__key_states[key]
+        except KeyError:
             debug(f'on_delay_expires: key {key} not in state')
             return
-
-        state = self.__key_states[key]
 
         try:
             state.actions_delayed.remove(action_idx)
         except KeyError:
             # action already removed
+            debug(
+                f'on_delay_expires: action {action_idx} already removed from key {key}'
+            )
             return
 
         state.actions_active.add(action_idx)
@@ -419,7 +396,9 @@ class Flex(Module):
         interrupt: Key = None,
     ):
         if key not in self.__key_states.keys():
-            debug(f'do_action: key {key} not in state')
+            debug(
+                f'do_action: key_mode={Mode.flag_to_str(key_mode)} key {key} not in state'
+            )
             return
 
         state = self.__key_states[key]
@@ -429,6 +408,8 @@ class Flex(Module):
         except KeyError:
             return
 
+        completed = False
+
         if key_mode in action.on:
             if (action.ignore and action.ignore & keyboard.keys_pressed) or (
                 action.requires and action.requires - keyboard.keys_pressed
@@ -436,46 +417,34 @@ class Flex(Module):
                 debug(f'do_action: ignoring action {action_idx} on key {key}')
             else:
                 debug(
-                    f'do_action: key_mode={key_mode} executing action {action_idx} on key {key}'
+                    f'do_action: key_mode={Mode.flag_to_str(key_mode)} executing action {action_idx} on key {key}'
                 )
                 action.do(state.key_map, keyboard, interrupt)
-                self.__remove_action(action_idx, key, keyboard)
+                completed = True
 
         elif key_mode in action.stop_on:
-            self.__remove_action(action_idx, key, keyboard)
+            completed = True
+
+        if completed:
+            # remove action from state
+            state.actions_active.discard(action_idx)
+            state.actions_delayed.discard(action_idx)
+
+            del state.actions[action_idx]
+            if not state.actions_cnt:
+                self.__remove_key_from_state(key, keyboard)
 
     def on_release(self, key: Key, keyboard: KMKKeyboard, *args, **kwargs):
+        debug(f'key {key} released')
         if key not in self.__key_states.keys():
             return
 
         state = self.__key_states[key]
         state.status = _KeyStatus.RELEASED
-
         for i in tuple(state.actions_active):
             self.do_action(i, Mode.RELEASE, key, keyboard)
-
-    def __remove_action(self, action_idx: int, key: Key, keyboard: KMKKeyboard):
-        try:
-            state = self.__key_states[key]
-        except KeyError:
-            # key already removed
-            return
-
-        try:
-            tasks = state.action_tasks(action_idx)
-            for t in tasks:
-                keyboard.cancel_timeout(t)
-        except KeyError:
-            # action already removed
-            debug(f'action {action_idx} already removed from key {key}')
-
-        # remove action from state
-        state.actions_active.discard(action_idx)
-        state.actions_delayed.discard(action_idx)
-        del state.actions[action_idx]
-
-        if not state.actions_cnt:
-            self.__remove_key_from_state(key, keyboard)
+        # always a remove
+        self.__remove_key_from_state(key, keyboard)
 
     def __remove_key_from_state(self, key: Key, keyboard: KMKKeyboard):
         try:

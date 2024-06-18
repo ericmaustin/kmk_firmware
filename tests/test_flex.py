@@ -35,7 +35,9 @@ class TestFlex(unittest.TestCase):
                 flex.Action(
                     flex.Mode.RELEASE
                     | flex.Mode.TIMEOUT,  # trigger on release or timeout
-                    flex.tap_action(0, 1, wrap_interrupt=True),  # tap with left shift
+                    flex.tap_action(
+                        0, {KC.LSFT}, wrap_interrupt=True
+                    ),  # tap with left shift
                     stop_on=flex.Mode.INTERRUPT
                     | flex.Mode.RELEASE,  # abort if interrupted
                     after=tap_time,  # activate after 100ms
@@ -49,7 +51,7 @@ class TestFlex(unittest.TestCase):
             [flex_mod],
             [
                 [
-                    KC.TEST(KC.A, KC.LSFT),
+                    KC.TEST(KC.A),
                     KC.B,
                     KC.C,
                 ],
@@ -57,6 +59,7 @@ class TestFlex(unittest.TestCase):
             ],
             debug_enabled=True,
         )
+        keyboard.keyboard.keys_pressed = set()
 
         keyboard.test(
             'flex short tap',
@@ -67,7 +70,7 @@ class TestFlex(unittest.TestCase):
         keyboard.test(
             'flex long tap',
             [(0, True), outside_tap_time, (0, False)],
-            [{KC.LSHIFT, KC.A}, {}],
+            [{KC.LSHIFT, KC.A}, {}, {}, {}],
         )
 
     def test_flex_auto_mod(self):
@@ -101,6 +104,8 @@ class TestFlex(unittest.TestCase):
             debug_enabled=True,
         )
 
+        keyboard.keyboard.keys_pressed = set()
+
         keyboard.test(
             'auto_mod short tap',
             [(0, True), inside_tap_time - 2, (0, False)],
@@ -115,7 +120,7 @@ class TestFlex(unittest.TestCase):
 
     def test_three_mode_key(self):
         flex_mod = flex.Flex()
-        inside_tap_time = 2 * KeyboardTest.loop_delay_ms
+        inside_tap_time = 3 * KeyboardTest.loop_delay_ms
         timeout = 10 * KeyboardTest.loop_delay_ms
 
         flex_mod.add_key(
@@ -126,7 +131,7 @@ class TestFlex(unittest.TestCase):
                     0,
                     {KC.LSFT},
                     delay=inside_tap_time,
-                    timeout=timeout,
+                    timeout=100 * KeyboardTest.loop_delay_ms,
                 ),
                 flex.mod_interrupt(
                     {KC.LCTRL},
@@ -141,17 +146,19 @@ class TestFlex(unittest.TestCase):
             [
                 [
                     KC.TEST(KC.A),
-                    KC.B,
+                    KC.TEST(KC.B),
                     KC.C,
                 ],
             ],
             debug_enabled=True,
         )
 
+        keyboard.keyboard.keys_pressed = set()
+
         keyboard.test(
             'triple short tap',
             [(0, True), inside_tap_time - 2, (0, False)],
-            [{KC.A}, {}],
+            [{KC.A}, {}, {}, {}],
         )
 
         keyboard.test(
@@ -160,11 +167,50 @@ class TestFlex(unittest.TestCase):
             [{KC.LSHIFT, KC.A}, {}],
         )
 
+    def test_triple_tap(self):
+        KC.clear()
+
+        flex_mod = flex.Flex()
+        inside_tap_time = 3 * KeyboardTest.loop_delay_ms
+        timeout = 10 * KeyboardTest.loop_delay_ms
+
+        flex_mod.add_key(
+            flex.FlexKey(
+                'TRIPLE_TAP',
+                flex.tap_on_release(0, inside_tap_time),
+                flex.hold_auto_mod(
+                    0,
+                    {KC.LSFT},
+                    delay=inside_tap_time,
+                    timeout=100 * KeyboardTest.loop_delay_ms,
+                ),
+                flex.mod_interrupt(
+                    {KC.LCTRL},
+                    delay=inside_tap_time,
+                    ignore={KC.LSFT},
+                ),
+            )
+        )
+
+        keyboard = KeyboardTest(
+            [flex_mod],
+            [
+                [
+                    KC.TRIPLE_TAP(KC.A),
+                    KC.TRIPLE_TAP(KC.B),
+                    KC.C,
+                ],
+            ],
+            debug_enabled=True,
+        )
+
+        keyboard.keyboard.keys_pressed = set()
+
         keyboard.test(
             'triple long tap with interrupt',
             [
                 (0, True),
-                inside_tap_time + 5,
+                inside_tap_time + 2,
                 (1, True),
                 2 * KeyboardTest.loop_delay_ms,
                 (1, False),

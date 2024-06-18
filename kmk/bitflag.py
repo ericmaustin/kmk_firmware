@@ -55,6 +55,9 @@ class Flag:
     def __repr__(self):
         return f'<{self.__class__.__name__} bits={self.bits} bin={bin(self.bits)}>'
 
+    def __hash__(self):
+        return hash(self.bits)
+
 
 class Operation(Flag):
     __slots__ = '_operation'
