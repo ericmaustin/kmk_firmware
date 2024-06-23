@@ -17,8 +17,7 @@ except ImportError:
 
 from micropython import const
 
-from kmk import bitflag as bf
-from kmk.keys import Key, KC, ModifierKey, make_argumented_key
+from kmk.keys import KC, Key, ModifierKey, make_argumented_key
 from kmk.modules import Module
 from kmk.utils import Debug
 from kmk.kmk_keyboard import KMKKeyboard
@@ -34,50 +33,15 @@ DEFAULT_TIMEOUT = const(300)
 DEFAULT_TAP_TIME = const(100)
 DEFAULT_TAP_DELAY = const(10)
 
-# if _debug.enabled:
-#
-#     def debug(msg: str):
-#         _debug("[Flex] " + msg)
-#
-# else:
-#
-#     def debug(_: str):
-#         pass
+if _debug.enabled:
 
+    def debug(msg: str):
+        _debug("[Flex] " + msg)
 
-def debug(msg: str):
-    _debug("[Flex] " + msg)
+else:
 
-
-@bf.flagged
-class Mode:
-    NONE = bf.NONE
-    PRESS = bf.Flag()  # press key
-    RELEASE = bf.Flag()  # release key
-    TIMEOUT = bf.Flag()
-    INTERRUPT = bf.Flag()
-    TAP = bf.Operation('PRESS | RELEASE')  # tap key
-
-    @staticmethod
-    def flag_to_str(flag: bf.Flag) -> str:
-        return {
-            Mode.PRESS: 'PRESS',
-            Mode.RELEASE: 'RELEASE',
-            Mode.TIMEOUT: 'TIMEOUT',
-            Mode.INTERRUPT: 'INTERRUPT',
-            Mode.TAP: 'TAP',
-        }[flag]
-
-
-@bf.flagged
-class _KeyStatus:
-    NONE = bf.NONE
-    PRESSED = bf.Flag()
-    RELEASED = bf.Flag()
-
-
-def noop(*_, **__):
-    pass
+    def debug(_: str):
+        pass
 
 
 def add_mods(key: Key, mods: set[ModifierKey]) -> Key:
@@ -86,376 +50,298 @@ def add_mods(key: Key, mods: set[ModifierKey]) -> Key:
     return key
 
 
-def press_action(ikey: int) -> KeyAction:
-    return lambda key_map, keyboard, *_, **__: keyboard.add_key(key_map[ikey])
+def maybe_add_mods(key: Key, mods: set[ModifierKey], keyboard: KMKKeyboard) -> Key:
+    for mod in mods - keyboard.keys_pressed:
+        key = mod(key, keyboard)
+    return key
 
 
-def release_action(ikey: int) -> KeyAction:
-    return lambda key_map, keyboard, *_, **__: keyboard.remove_key(key_map[ikey])
+def tap_key(
+    key: Key,
+    keyboard: KMKKeyboard,
+    send_hid_after_add: bool = False,
+    send_hid_after_remove: bool = False,
+):
+    keyboard.add_key(key)
+    if send_hid_after_add:
+        keyboard._send_hid()
+    keyboard.remove_key(key)
+    if send_hid_after_remove:
+        keyboard._send_hid()
 
 
-def tap_action(
-    ikey: int,
-    mods: set[ModifierKey] | int = None,
-    wrap_interrupt: bool = False,
-) -> KeyAction:
-    mods = mods or ()
-
-    def f(
-        key_map: tuple[Key, ...], keyboard: KMKKeyboard, interrupt: Key = None
-    ) -> None:
-        rel_keys = []
-
-        if isinstance(mods, int):
-            mod_keys = key_map[mods]
-        else:
-            mod_keys = mods
-
-        debug(f"tap_action mods: {mod_keys}")
-
-        keyboard.add_key(add_mods(key_map[ikey], mods))
-
-        if wrap_interrupt and interrupt:
-            if isinstance(interrupt.meta, _KeyMeta):
-                keyboard.tap_key(add_mods(interrupt.meta.key_map[0]))
-            else:
-                keyboard.tap_key(add_mods(interrupt, mod_keys))
-
-        # keyboard._send_hid()
-
-        def cb(keys):
-            for _k in reversed(keys):
-                keyboard.remove_key(_k)
-            # keyboard._send_hid()
-
-        keyboard.set_timeout(0, lambda keys=tuple(rel_keys): cb(keys))
-
-    return lambda key_map, keyboard, interrupt: f(key_map, keyboard, interrupt)
+class KeyStatus:
+    NONE = const(0)
+    TAP = const(1)
+    HELD = const(2)
+    HOLD_TIMEOUT = const(3)
+    RELEASED = const(4)
 
 
-def mod_interrupt_action(mods: set[ModifierKey]) -> KeyAction:
-
-    def f(_, keyboard: KMKKeyboard, interrupt: Key = None) -> None:
-        if isinstance(interrupt.meta, _KeyMeta):
-            debug(
-                f"mod_interrupt_action: interrupting with {interrupt.meta.key_map[0]} mods: {mods}"
-            )
-            modded_key = add_mods(interrupt.meta.key_map[0], mods)
-            debug(f"mod_interrupt_action: modded_key: {modded_key}")
-            keyboard.tap_key(modded_key)
-            return
-
-        keyboard.tap_key(add_mods(interrupt, mods))
-
-    return f
-
-
-class Action:
-    __slots__ = (
-        'on',
-        'do',
-        'after',
-        'timeout',
-        'stop_on',
-        'ignore',
-        'requires',
-        'interrupt_requires',
-        'interrupt_ignore',
-        'replace_interrupt',
-        'id',
-    )
-
+class FlexMeta:
     def __init__(
         self,
-        on: bf.Flag,
-        do: KeyAction,
-        after: int = -1,
-        timeout: int = -1,
-        stop_on: bf.Flag = Mode.RELEASE,
-        ignore: set[Key] = None,
-        requires: set[Key] = None,
-        interrupt_ignore: set[Key] = None,
-        interrupt_requires: set[Key] = None,
+        tap: Key,
+        hold: list[Key] | Key | None = None,
+        mod: set[ModifierKey] | ModifierKey = None,
+        mod_targets: set[Key] | None = None,
+        tap_timeout: int = DEFAULT_TAP_TIME,
+        hold_timeout: int = DEFAULT_TIMEOUT,
+        hold_delay: int = DEFAULT_TAP_DELAY,
     ):
-        self.on = on
-        self.do = do
-        self.after = after
-        self.timeout = timeout
-        self.stop_on = stop_on
-        self.requires = requires or set()
-        self.ignore = ignore or set()
-        self.interrupt_requires = interrupt_requires or set()
-        self.interrupt_ignore = interrupt_ignore or set()
+        self.tap: Key = tap
+        self.tap_timeout: int = tap_timeout
+        self.hold = hold if not isinstance(hold, Key) else [hold]
+        self.hold_delay: int = hold_delay
+        self.hold_timeout: int = hold_timeout
+        self.mod: set[ModifierKey] = mod if isinstance(mod, set) else {mod}
+        self.mod_targets: set[Key] = mod_targets
+
+    def __eq__(self, other):
+        return self.tap == other.key
 
 
-class _KeyMeta:
-    __slots__ = ('key_map',)
+def flex_key(
+    tap: Key | None = None,
+    hold: list[Key] | Key | None = None,
+    mod: set[ModifierKey] | ModifierKey = None,
+    hold_mod: set[ModifierKey] | ModifierKey = None,
+    mod_targets: set[Key] | None = None,
+    tap_timeout: int = DEFAULT_TAP_TIME,
+    hold_timeout: int = DEFAULT_TIMEOUT,
+    hold_delay: int = DEFAULT_TAP_DELAY,
+    mod_replace: dict[tuple[ModifierKey] | ModifierKey, Key] = None,
+) -> Callable[..., Key]:
+    def factory(*args, **kwargs) -> Key:
+        arg_iter = iter(args)
+        tap_key = next(arg_iter, None) or kwargs.pop('tap_key', None) or tap
+        hold_keys = next(arg_iter, None) or kwargs.pop('hold_keys', None) or hold
+        if hold_keys:
+            hold_keys = hold_keys if isinstance(hold_keys, list) else [hold_keys]
+        if hold_mod:
+            if not hold_keys:
+                hold_keys = [tap_key]
+            hold_mods = hold_mod if isinstance(hold_mod, set) else {hold_mod}
+            for i, k in enumerate(hold_keys):
+                hold_keys[i] = add_mods(k, hold_mods)
 
-    def __init__(self, *key_map: tuple[Key, ...]):
-        self.key_map = key_map
+        factory_kwargs = {
+            k: v
+            for k, v in {
+                'tap': tap_key,
+                'hold': hold_keys,
+                'mod': mod,
+                'mod_targets': mod_targets,
+                'tap_timeout': tap_timeout,
+                'hold_timeout': hold_timeout,
+                'hold_delay': hold_delay,
+                'mod_replace': mod_replace,
+            }.items()
+            if v is not None
+        }
+        factory_kwargs |= kwargs
+
+        return KC.FLEX(
+            *list(arg_iter),
+            **factory_kwargs,
+        )
+
+    return factory
 
 
 class _KeyState:
-    __slots__ = (
-        'status',
-        'interrupt',
-        'actions',
-        '__key_map',
-        '__tasks',
-        'actions_active',
-        'actions_running',
-        'actions_delayed',
-    )
-
     def __init__(
         self,
-        key_map: tuple[Key, ...],
-        status: _KeyStatus.NONE,
+        key: Key,
+        state: int,
+        int_coord: int,
+        config: FlexMeta | None = None,
     ):
+        self.key: Key = key
+        self.config: FlexMeta = config
+        self.int_coord: int = int_coord
+        self.status: int = state
+        self.interrupted = False
+        self.hold_idx = 0
+        # pre-calculate hash
+        self.__hash = hash((self.key, self.int_coord))
+
+    @property
+    def has_config(self) -> bool:
+        return self.config is not None
+
+    @property
+    def hash(self):
+        return self.__hash
+
+    def set_status(self, status: int):
         self.status = status
-        self.interrupt: Key = None
-        self.__key_map = key_map
-        self.actions_active: set[int] = set()
-        self.actions_delayed: set[int] = set()
-        self.actions: dict[int, Action] = {}
-        self.__tasks: dict[int, list[int]] = {}
 
-    @property
-    def all_tasks(self):
-        return (t for ts in self.__tasks.values() for t in ts)
+    def __hash__(self) -> int:
+        return self.__hash
 
-    @property
-    def key_map(self) -> tuple[Key, ...]:
-        return self.__key_map
-
-    @property
-    def actions_cnt(self):
-        return len(self.actions)
-
-    def action_tasks(self, i: int) -> list[int]:
-        return self.__tasks[i]
-
-    def add_task(self, action_idx, task):
-        self.__tasks.get(action_idx, []).append(task)
-
-
-class FlexKey:
-    __slots__ = (
-        'name',
-        'actions',
-    )
-
-    def __init__(self, name: tuple[str, ...] | str, *actions: Action):
-        self.name: tuple[str, ...] = name if isinstance(name, tuple) else (name,)
-        self.actions: tuple[Action, ...] = actions
+    def __eq__(self, other):
+        return (self.key == other.key) and (self.int_coord == other.int_coord)
 
     def __repr__(self):
-        return f'<FlexKey {self.name}>'
+        return f"<HrmKeyState(state={self.status}, int_coord{self.int_coord})>"
 
 
 class Flex(Module):
-    __key_states: dict[Key, _KeyState] = {}
+    def __init__(
+        self,
+        overrides: dict[Key, FlexMeta] = None,
+    ):
 
-    def __init__(self, *keys: FlexKey):
-        self.add_key(*keys)
+        self._map = overrides or {}
+        self._key_buffer: dict[int, _KeyState] = {}
+        self._tap_tasks: dict[int, int] = {}
+        self._hold_tasks: dict[int, int] = {}
 
-    def add_key(self, *args: FlexKey):
-        for k in args:
-            debug(f'adding {k}')
-            make_argumented_key(
-                validator=_KeyMeta,
-                names=k.name,
-                on_press=lambda key, keyboard, *arg, **kwargs: self.on_press(
-                    key, k.actions, keyboard
-                ),
-                on_release=self.on_release,
-            )
+        make_argumented_key(
+            validator=FlexMeta,
+            names=('FX', 'FLX', 'FLEX'),
+        )
 
     def process_key(
         self, keyboard: KMKKeyboard, current_key: Key, is_pressed: bool, int_coord: int
     ):
-        if not is_pressed:
-            # ignore key if already in state or key is released
-            return current_key
+        key = _KeyState(
+            key=current_key,
+            state=KeyStatus.TAP if is_pressed else KeyStatus.RELEASED,
+            int_coord=int_coord,
+        )
 
-        captured = False
+        if key.key in self._map.keys():
+            key.config = self._map[key.key]
+            # key.key = key.config.tap_key
 
-        for key in tuple(self.__key_states.keys()):
-            if key == current_key:
-                # ignore THIS key
-                continue
+        elif isinstance(key.key.meta, FlexMeta):
+            # flexmeta argumented key
+            key.config = key.key.meta
+            # key.key = key.config.tap_key
 
-            state = self.__key_states[key]
+        if is_pressed:
+            return self.handle_press(key, keyboard)
 
-            for i in tuple(state.actions_active):
-                action = state.actions[i]
-                if (
-                    action.interrupt_requires
-                    and action.interrupt_requires - keyboard.keys_pressed
-                ):
-                    debug(f'key {current_key} does not meet interrupt requirements')
-                    continue
+        return self.handle_release(key, keyboard)
 
-                if (
-                    action.interrupt_ignore
-                    and action.interrupt_ignore & keyboard.keys_pressed
-                ):
-                    debug(f'key {current_key} is ignored by interrupt_ignore')
-                    continue
+    def handle_press(self, key: _KeyState, keyboard: KMKKeyboard) -> Key | None:
+        # remove key from buffer if it's already there (re-press)
+        self.remove_key(key.hash, keyboard)
+        # process interrupt for all held keys
+        for k in tuple(self._key_buffer.values()):
+            # cancel any active hold tasks on interrupt
+            k.interrupted = True
+            if k.status == KeyStatus.TAP:
+                # if we're within that TAP window then just tap the key now
+                # ... this is a better experience when rolling keysa
+                self.remove_key(k.hash, keyboard)
+                k.status = KeyStatus.RELEASED
+                tap_key(k.config.tap, keyboard, send_hid_after_add=True)
 
-                self.do_action(i, Mode.INTERRUPT, key, keyboard, current_key)
-                # check if action was executed
-                if i not in state.actions_active:
-                    captured = True
-
-        return current_key if not captured else None
-
-    def on_press(
-        self,
-        key: Key,
-        actions: tuple[Action, ...],
-        keyboard: KMKKeyboard,
-    ):
-        if key in tuple(self.__key_states.keys()):
-            debug(f'key {key} already in state, clearing')
-            self.__remove_key_from_state(key, keyboard)
-
-        debug(f'key {key} pressed')
-        state = _KeyState(key_map=key.meta.key_map, status=_KeyStatus.PRESSED)
-
-        self.__key_states[key] = state
-
-        for i, act in enumerate(actions):
-            state.actions[i] = act
-            if act.after > -1:
-                state.actions_delayed.add(i)
-                state.add_task(
-                    i,
-                    keyboard.set_timeout(
-                        act.after,
-                        lambda action_idx=i: self.on_delay_expires(
-                            action_idx, key, keyboard
-                        ),
-                    ),
-                )
-                continue
-
-            state.actions_active.add(i)
-            self.do_action(i, Mode.PRESS, key, keyboard)
-            if act.timeout > -1:
-                _idx = i
-                state.add_task(
-                    _idx,
-                    keyboard.set_timeout(
-                        act.timeout,
-                        lambda action_idx=i: self.do_action(
-                            action_idx, Mode.TIMEOUT, key, keyboard
-                        ),
-                    ),
-                )
-
-    def on_delay_expires(self, action_idx: int, key: Key, keyboard: KMKKeyboard):
-        try:
-            state = self.__key_states[key]
-        except KeyError:
-            debug(f'on_delay_expires: key {key} not in state')
-            return
-
-        try:
-            state.actions_delayed.remove(action_idx)
-        except KeyError:
-            # action already removed
-            debug(
-                f'on_delay_expires: action {action_idx} already removed from key {key}'
-            )
-            return
-
-        state.actions_active.add(action_idx)
-
-        # attempt PRESS action
-        self.do_action(action_idx, Mode.PRESS, key, keyboard)
-
-        action = state.actions[action_idx]
-        if action.timeout > -1:
-            state.add_task(
-                action_idx,
-                keyboard.set_timeout(
-                    action.timeout,
-                    lambda _action_idx=action_idx: self.do_action(
-                        _action_idx, Mode.TIMEOUT, key, keyboard
-                    ),
-                ),
-            )
-
-    def do_action(
-        self,
-        action_idx: int,
-        key_mode: bf.Flag,
-        key: Key,
-        keyboard: KMKKeyboard,
-        interrupt: Key = None,
-    ):
-        if key not in self.__key_states.keys():
-            debug(
-                f'do_action: key_mode={Mode.flag_to_str(key_mode)} key {key} not in state'
-            )
-            return
-
-        state = self.__key_states[key]
-
-        try:
-            action = state.actions[action_idx]
-        except KeyError:
-            return
-
-        completed = False
-
-        if key_mode in action.on:
-            if (action.ignore and action.ignore & keyboard.keys_pressed) or (
-                action.requires and action.requires - keyboard.keys_pressed
+            if (
+                k.status in (KeyStatus.HELD, KeyStatus.HOLD_TIMEOUT)
+                and k.config.mod
+                # only add mods if the key is in the mod_targets
+                and (not k.config.mod_targets or key.key in k.config.mod_targets)
             ):
-                debug(f'do_action: ignoring action {action_idx} on key {key}')
-            else:
-                debug(
-                    f'do_action: key_mode={Mode.flag_to_str(key_mode)} executing action {action_idx} on key {key}'
-                )
-                action.do(state.key_map, keyboard, interrupt)
-                completed = True
+                # add mods from any held keys with mods
+                key.key = maybe_add_mods(key.key, k.config.mod, keyboard)
 
-        elif key_mode in action.stop_on:
-            completed = True
+        if key.config:
+            if key.config.hold or key.config.mod:
+                debug(f"handle_press({key.key}) captured key hash = {key.hash}")
+                # add key to buffer only if we are delaying tap
+                self._key_buffer[key.hash] = key
+                if key.config.tap_timeout > 0:
+                    self._tap_tasks[key.hash] = keyboard.set_timeout(
+                        key.config.tap_timeout,
+                        lambda _k=key.hash: self.handle_tap_timeout(_k, keyboard),
+                    )
+                else:
+                    self._hold_tasks[key.hash] = keyboard.set_timeout(
+                        key.config.hold_timeout,
+                        lambda _k=key.hash: self.handle_hold_timeout(_k, keyboard),
+                    )
+                return None
 
-        if completed:
-            # remove action from state
-            state.actions_active.discard(action_idx)
-            state.actions_delayed.discard(action_idx)
+        return key.key
 
-            del state.actions[action_idx]
-            if not state.actions_cnt:
-                self.__remove_key_from_state(key, keyboard)
+    def handle_release(self, key: _KeyState, keyboard: KMKKeyboard) -> Key | None:
+        if key.config:
+            if key.hash in self._key_buffer.keys():
+                key = self._key_buffer[key.hash]
 
-    def on_release(self, key: Key, keyboard: KMKKeyboard, *args, **kwargs):
-        debug(f'key {key} released')
-        if key not in self.__key_states.keys():
+                if key.status == KeyStatus.TAP or (
+                    not key.interrupted
+                    and (not key.config.hold or key.status == KeyStatus.HELD)
+                ):
+                    # still in tap mode, so tap the key
+                    tap_key(key.config.tap, keyboard, send_hid_after_add=True)
+
+                debug(f"handle_release({key.key}) removing key from buffer")
+                self.remove_key(key.hash, keyboard)
+
+        return key.key
+
+    def remove_key(self, key_hash: int, keyboard):
+        self.cancel_all_tasks(key_hash, keyboard)
+        if key_hash in self._key_buffer.keys():
+            del self._key_buffer[key_hash]
+
+    def handle_tap_timeout(self, key_hash: int, keyboard: KMKKeyboard):
+        del self._tap_tasks[key_hash]
+        if key_hash not in self._key_buffer.keys():
             return
 
-        state = self.__key_states[key]
-        state.status = _KeyStatus.RELEASED
-        for i in tuple(state.actions_active):
-            self.do_action(i, Mode.RELEASE, key, keyboard)
-        # always a remove
-        self.__remove_key_from_state(key, keyboard)
+        key = self._key_buffer[key_hash]
 
-    def __remove_key_from_state(self, key: Key, keyboard: KMKKeyboard):
-        try:
-            state = self.__key_states[key]
-        except KeyError:
-            # key already removed
+        if key.status != KeyStatus.TAP:
             return
 
-        for task in state.all_tasks:
-            keyboard.cancel_timeout(task)
-        del self.__key_states[key]
+        debug(f"handle_tap_timeout({key.key}) tap timeout, setting key to HELD")
+        key.status = KeyStatus.HELD
+        if key.config.hold:
+            self._hold_tasks[key_hash] = keyboard.set_timeout(
+                key.config.hold_timeout,
+                lambda _k=key_hash: self.handle_hold_timeout(key_hash, keyboard),
+            )
+
+    def handle_hold_timeout(self, key_hash: int, keyboard: KMKKeyboard):
+        del self._hold_tasks[key_hash]
+        if key_hash not in self._key_buffer.keys():
+            debug(f"handle_hold_timeout({key_hash}) key not in buffer")
+            return
+
+        key = self._key_buffer[key_hash]
+        key.status = KeyStatus.HOLD_TIMEOUT
+        debug(
+            f"handle_hold_timeout({key.key}) tapping hold key {key.config.hold[key.hold_idx]}"
+        )
+        hold_key = key.config.hold[key.hold_idx]
+        tap_key(hold_key, keyboard, send_hid_after_add=True)
+        key.hold_idx += 1
+        if key.hold_idx < len(key.config.hold):
+            self._hold_tasks[key_hash] = keyboard.set_timeout(
+                key.config.hold_delay,
+                lambda _k=key_hash: self.handle_hold_timeout(_k, keyboard),
+            )
+
+    def cancel_all_tasks(self, key_hash: int, keyboard: KMKKeyboard):
+        self.cancel_tap_task(key_hash, keyboard)
+        self.cancel_hold_task(key_hash, keyboard)
+
+    def cancel_tap_task(self, key_hash: int, keyboard: KMKKeyboard):
+        if key_hash in self._tap_tasks:
+            keyboard.cancel_timeout(self._tap_tasks[key_hash])
+            del self._tap_tasks[key_hash]
+
+    def cancel_hold_task(self, key_hash: int, keyboard: KMKKeyboard):
+        if key_hash in self._hold_tasks:
+            debug(f"cancel_hold_task({key_hash})")
+            keyboard.cancel_timeout(self._hold_tasks[key_hash])
+            del self._hold_tasks[key_hash]
 
     def before_hid_send(self, keyboard):
         return
@@ -477,74 +363,3 @@ class Flex(Module):
 
     def after_matrix_scan(self, keyboard):
         return
-
-
-def one_shot(
-    key_idx: int,
-    timeout: int = DEFAULT_TIMEOUT,
-    ignore: set[Key] = None,
-    requires: set[Key] = None,
-) -> Action:
-    return Action(
-        Mode.INTERRUPT,
-        tap_action(key_idx, wrap_interrupt=True),
-        timeout=timeout,
-        stop_on=Mode.INTERRUPT | Mode.TIMEOUT,
-        interrupt_ignore=ignore,
-        interrupt_requires=requires,
-    )
-
-
-def tap_on_release(
-    key_idx: int,
-    tap_time: int = DEFAULT_TAP_TIME,
-    delay: int = -1,
-    mods: tuple[ModifierKey, ...] = None,
-) -> Action:
-    mods = mods or ()
-    return Action(
-        Mode.RELEASE | Mode.INTERRUPT,
-        tap_action(key_idx, mods=mods),
-        after=delay,
-        timeout=tap_time,
-        stop_on=Mode.INTERRUPT | Mode.RELEASE | Mode.TIMEOUT,
-        ignore=set(mods),
-    )
-
-
-def hold_auto_mod(
-    key_idx: int,
-    mods: set[ModifierKey],
-    timeout: int = DEFAULT_TIMEOUT,
-    delay: int = 0,
-) -> Action:
-    mods = mods or ()
-    # default ignore mods
-    return Action(
-        Mode.TIMEOUT | Mode.RELEASE,
-        tap_action(key_idx, mods=mods, wrap_interrupt=False),
-        after=delay,
-        stop_on=Mode.INTERRUPT | Mode.RELEASE,
-        ignore=set(mods),
-        timeout=timeout,
-    )
-
-
-def auto_shift(key_idx: int, timeout: int = DEFAULT_TIMEOUT, delay: int = 0) -> Action:
-    return hold_auto_mod(key_idx, {KC.LSHIFT}, timeout=timeout, delay=delay)
-
-
-def mod_interrupt(
-    mods: set[ModifierKey],
-    timeout: int = -1,
-    delay: int = 0,
-    ignore: set[Key] = None,
-) -> Action:
-    return Action(
-        Mode.INTERRUPT,
-        mod_interrupt_action(mods),
-        after=delay,
-        timeout=timeout,
-        stop_on=Mode.RELEASE,
-        ignore=(ignore or set()) | set(mods),
-    )

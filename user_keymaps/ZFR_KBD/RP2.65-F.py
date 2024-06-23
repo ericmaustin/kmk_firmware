@@ -90,7 +90,7 @@ def set_sys_vol(state):
             # vol_direction = "down"
             cmd = KC.VOLD
         # Send command  cmd to OS to up and down volume
-        keyboard.tap_key(cmd)
+        keyboard.key(cmd)
         # print(f"Setting system volume {vol_direction} by {level_diff} to reach {level}")
 
         keyboard.last_level = level
@@ -142,7 +142,7 @@ def slider_2_handler(state):
         bend_idx = int((state.position / 127) * 64)
         bend = pb_lut[bend_idx]
         key = KC.MIDI_PB(bend)
-        keyboard.tap_key(key)
+        keyboard.key(key)
     else:
         set_led_var(state)
 

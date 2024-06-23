@@ -22,7 +22,7 @@ def sequence_press_handler(key, keyboard, KC, *args, **kwargs):
             keyboard.remove_key(ikey)
             keyboard._send_hid()
         else:
-            keyboard.tap_key(ikey)
+            keyboard.key(ikey)
             keyboard._send_hid()
 
     return keyboard
