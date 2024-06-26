@@ -47,7 +47,7 @@ AS = flex_key(
 
 AS_SFT = flex_key(
     hold_mod=KC.LSFT,
-    tap_timeout=100,
+    tap_time=100,
     hold_timeout=200,
 )
 
