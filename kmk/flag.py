@@ -12,14 +12,27 @@ except ImportError:
 
 
 class Flag:
-    __slots__ = ('_bits',)
+    __slots__ = ('_bits', '_name')
 
-    def __init__(self, bits: int = None):
-        self._bits = bits
+    def __init__(self, b: int = None, n: str = None):
+        self._bits = b
+        self._name = n
 
     def set(self, bits: int) -> Flag:
         self._bits = bits
         return self
+
+    @property
+    def name(self):
+        return self._name or f"unnamed({self.bits})"
+
+    @property
+    def is_named(self) -> bool:
+        return self._name is not None
+
+    @name.setter
+    def name(self, n: str):
+        self._name = n
 
     @property
     def is_set(self) -> bool:
@@ -34,26 +47,32 @@ class Flag:
     def __contains__(self, item: Flag) -> bool:
         return self._bits & item.bits == item.bits
 
-    def __lt__(self, other: Flag) -> Flag:
-        return Flag(self.bits < other.bits)
+    def __lt__(self, other: Flag) -> bool:
+        return self.bits < other.bits
 
     def __eq__(self, other: Flag) -> bool:
         return self.bits == other.bits
 
     def __and__(self, other: Flag) -> Flag:
-        return Flag(self.bits & other.bits)
+        return Flag(self.bits & other.bits, n=f'{self.name} & {other.name}')
 
     def __or__(self, other: Flag) -> Flag:
-        return Flag(self.bits | other.bits)
+        return Flag(self.bits | other.bits, n=f'{self.name} | {other.name}')
 
     def __xor__(self, other: Flag) -> Flag:
-        return Flag(self.bits ^ other.bits)
+        return Flag(self.bits ^ other.bits, n=f'{self.name} ^ {other.name}')
 
     def __invert__(self) -> Flag:
-        return Flag(~self.bits)
+        return Flag(~self.bits, n=f'~{self.name}')
+
+    def __add__(self, other: Flag):
+        return self | other
+
+    def __sub__(self, other: Flag):
+        return self & ~other
 
     def __repr__(self):
-        return f'<{self.__class__.__name__} bits={self.bits} bin={bin(self.bits)}>'
+        return f'<Flag.{self.name}>'
 
     def __hash__(self):
         return hash(self.bits)
@@ -62,9 +81,9 @@ class Flag:
 class Operation(Flag):
     __slots__ = '_operation'
 
-    def __init__(self, operation: str):
-        super().__init__()
-        self._operation = operation
+    def __init__(self, o: str, n: str = None):
+        super().__init__(n=n)
+        self._operation = o
 
     @property
     def operation(self) -> str:
@@ -84,22 +103,29 @@ class Operation(Flag):
 
 
 class All(Flag):
-    def __init__(self):
-        super().__init__()
-        self._bits = -1
+    def __init__(self, n: str = 'All'):
+        super().__init__(-1, n)
 
 
 class No(Flag):
-    def __init__(self):
-        super().__init__()
-        self._bits = 0
+    def __init__(self, n: str = 'No'):
+
+        super().__init__(0, n)
 
 
-def init(flags: dict[str, Flag]):
+def auto(operation: str = None):
+    if operation:
+        return Operation(operation)
+    return Flag()
+
+
+def init(flags: dict[str, Flag] | list[Flag]):
     resolved_flags = {}
     ops = []
     i = 0
-    for k, flag in flags.items():
+    _iter = flags.items() if isinstance(flags, dict) else enumerate(flags)
+
+    for k, flag in _iter:
         if isinstance(flag, Operation):
             ops.append(flag)
         else:
@@ -118,6 +144,8 @@ def _init_flagged(cls):
         attr = getattr(cls, k)
         if isinstance(attr, Flag):
             flags[k] = attr
+            if not flags[k].is_named:
+                flags[k].name = k
     init(flags)
 
 
@@ -138,23 +166,25 @@ def flagged(cls):
     return Wrapped
 
 
-def named_flags(name: str, fields: tuple[str | tuple, ...]):
+def named(name: str, flags: tuple[str | Flag, ...], operations: dict[str, str] = None):
     resolved_flags = {}
-    ops = {}
-    for i, field in enumerate(fields):
-        if isinstance(field, tuple):
-            ops[field[0]] = Operation(field[1])
-            continue
-        resolved_flags[field] = Flag(1 << i)
+    for i, field in enumerate(flags):
+        if isinstance(field, Flag):
+            if not field.is_set:
+                field.set(1 << i)
+            resolved_flags[field.name] = field
+        else:
+            resolved_flags[field] = Flag(1 << i, field)
 
-    for k, op in ops.items():
-        op.load(resolved_flags)
-        resolved_flags[k] = op
+    for k, op in operations.items():
+        _op = Operation(op, k)
+        _op.load(resolved_flags)
+        resolved_flags[k] = _op
 
     return namedtuple(name, resolved_flags.keys())(*resolved_flags.values())
 
 
 ALL = All()
-ANY = ALL
 NO = No()
-NONE = NO
+NONE = No(n='NONE')
+ANY = All(n='ANY')

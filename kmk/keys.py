@@ -581,7 +581,7 @@ class Key:
         )
 
     def before_press_handler(self, fn: Callable[[Key, Keyboard, ...], bool]) -> None:
-        '''
+        """
         Attach a callback to be run prior to the on_press handler for this key.
         Receives the following:
 
@@ -598,14 +598,14 @@ class Key:
 
         These handlers are run in attachment order: handlers provided by earlier
         calls of this method will be executed before those provided by later calls.
-        '''
+        """
 
         if not hasattr(self, '_pre_press_handlers'):
             self._pre_press_handlers = []
         self._pre_press_handlers.append(fn)
 
     def after_press_handler(self, fn: Callable[[Key, Keyboard, ...], bool]) -> None:
-        '''
+        """
         Attach a callback to be run after the on_release handler for this key.
         Receives the following:
 
@@ -621,14 +621,14 @@ class Key:
 
         These handlers are run in attachment order: handlers provided by earlier
         calls of this method will be executed before those provided by later calls.
-        '''
+        """
 
         if not hasattr(self, '_post_press_handlers'):
             self._post_press_handlers = []
         self._post_press_handlers.append(fn)
 
     def before_release_handler(self, fn: Callable[[Key, Keyboard, ...], bool]) -> None:
-        '''
+        """
         Attach a callback to be run prior to the on_release handler for this
         key. Receives the following:
 
@@ -645,14 +645,14 @@ class Key:
 
         These handlers are run in attachment order: handlers provided by earlier
         calls of this method will be executed before those provided by later calls.
-        '''
+        """
 
         if not hasattr(self, '_pre_release_handlers'):
             self._pre_release_handlers = []
         self._pre_release_handlers.append(fn)
 
     def after_release_handler(self, fn: Callable[[Key, Keyboard, ...], bool]) -> None:
-        '''
+        """
         Attach a callback to be run after the on_release handler for this key.
         Receives the following:
 
@@ -668,7 +668,7 @@ class Key:
 
         These handlers are run in attachment order: handlers provided by earlier
         calls of this method will be executed before those provided by later calls.
-        '''
+        """
 
         if not hasattr(self, '_post_release_handlers'):
             self._post_release_handlers = []
@@ -730,7 +730,7 @@ def make_key(
     type: KeyType = KeyType.SIMPLE,
     **kwargs,
 ) -> Key:
-    '''
+    """
     Create a new key, aliased by `names` in the KC lookup table.
 
     If a code is not specified, the key is assumed to be a custom
@@ -744,7 +744,7 @@ def make_key(
     Names are case sensitive.
 
     All **kwargs are passed to the Key constructor
-    '''
+    """
 
     global NEXT_AVAILABLE_KEY
 

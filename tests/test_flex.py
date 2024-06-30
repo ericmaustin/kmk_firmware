@@ -33,7 +33,7 @@ class TestFlex(unittest.TestCase):
                         KC.B,
                     ],
                     hold_timeout=self.hold_timeout,
-                    mod={KC.LSFT},
+                    hold_interrupt={KC.LSFT},
                 )
             }
         )

@@ -7,7 +7,7 @@ except ImportError:
 
     init_circuit_python_modules_mocks()
 
-from kmk.keys import KC
+from kmk.keys import KC, ModifierKey
 from kmk.modules.automod import AutoMod
 from tests.keyboard_test import KeyboardTest
 from kmk.utils import Debug

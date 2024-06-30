@@ -84,7 +84,7 @@ class AutoMod(Module):
             return current_key
 
         if is_pressed:
-            if self._task:
+            if has_task:
                 cancel_task(self._task)
                 self._task = None
 
